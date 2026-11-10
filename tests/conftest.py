@@ -1,5 +1,7 @@
 # tests/conftest.py
 
+import os
+import sys
 import subprocess
 import time
 import logging
@@ -16,8 +18,6 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from app.database import Base, get_engine, get_sessionmaker
 from app.models.user import User
-from app.config import settings
-from app.database_init import init_db, drop_db
 
 # ======================================================================================
 # Logging Configuration
@@ -34,10 +34,20 @@ logger = logging.getLogger(__name__)
 fake = Faker()
 Faker.seed(12345)
 
-logger.info(f"Using database URL: {settings.DATABASE_URL}")
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
-# Create an engine and sessionmaker based on DATABASE_URL using factory functions
-test_engine = get_engine(database_url=settings.DATABASE_URL)
+# Use only the isolated test URL, never the application database.
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.engine import make_url
+
+test_url = make_url(TEST_DATABASE_URL)
+if test_url.get_backend_name() != "sqlite" and not (test_url.database or "").endswith("_test"):
+    raise RuntimeError("TEST_DATABASE_URL must name a disposable database ending in _test")
+
+test_engine = create_engine(TEST_DATABASE_URL, **(
+    {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
+    if test_url.get_backend_name() == "sqlite" else {}
+))
 TestingSessionLocal = get_sessionmaker(engine=test_engine)
 
 # ======================================================================================
@@ -55,7 +65,7 @@ def create_fake_user() -> Dict[str, str]:
         "last_name": fake.last_name(),
         "email": fake.unique.email(),  # Ensure uniqueness where necessary
         "username": fake.unique.user_name(),
-        "password": fake.password(length=12)
+        "password": "TestPass123!"
     }
 
 @contextmanager
@@ -104,61 +114,24 @@ class ServerStartupError(Exception):
 # Primary Database Fixtures
 # ======================================================================================
 @pytest.fixture(scope="session", autouse=True)
-def setup_test_database(request):
-    """
-    Initialize the test database once per session:
-    - Drop all existing tables to ensure a clean state.
-    - Create all tables based on the current models.
-    - Optionally initialize the database with seed data.
-    After tests, drop all tables unless --preserve-db is set.
-    """
-    logger.info("Setting up test database...")
-
-    # Drop all tables to ensure a clean slate
-    Base.metadata.drop_all(bind=test_engine)
-    logger.info("Dropped all existing tables.")
-
-    # Create all tables
+def setup_test_database():
+    # Tests create tables only on the explicitly isolated test engine.
     Base.metadata.create_all(bind=test_engine)
-    logger.info("Created all tables based on models.")
+    yield
+    test_engine.dispose()
 
-    # Initialize the database (e.g., run migrations or seed data)
-    init_db()
-    logger.info("Initialized the test database with initial data.")
-
-    yield  # All tests run here
-
-    preserve_db = request.config.getoption("--preserve-db")
-    if preserve_db:
-        logger.info("Skipping drop_db due to --preserve-db flag.")
-    else:
-        logger.info("Cleaning up test database...")
-        drop_db()
-        logger.info("Dropped test database tables.")
 
 @pytest.fixture
-def db_session(request) -> Generator[Session, None, None]:
-    """
-    Provide a test-scoped database session.
-    By default, truncates all tables after each test to ensure isolation,
-    unless --preserve-db is passed.
-    """
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        logger.info("db_session teardown: about to truncate tables.")
-        preserve_db = request.config.getoption("--preserve-db")
-        if preserve_db:
-            logger.info("Skipping table truncation due to --preserve-db flag.")
-        else:
-            logger.info("Truncating all tables now.")
+def db_session():
+    with TestingSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            session.rollback()
             for table in reversed(Base.metadata.sorted_tables):
-                logger.info(f"Truncating table: {table}")
                 session.execute(table.delete())
             session.commit()
-        session.close()
-        logger.info("db_session teardown: done.")
+
 
 # ======================================================================================
 # Test Data Fixtures
@@ -220,7 +193,7 @@ def fastapi_server():
 
     try:
         process = subprocess.Popen(
-            ['python', 'main.py'],
+            [sys.executable, 'main.py'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )

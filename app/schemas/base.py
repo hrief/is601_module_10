@@ -6,8 +6,8 @@ from datetime import datetime
 
 class UserBase(BaseModel):
     """Base user schema with common fields"""
-    first_name: str = Field(max_length=50, example="John")
-    last_name: str = Field(max_length=50, example="Doe")
+    first_name: str = Field(default="", max_length=50, example="John")
+    last_name: str = Field(default="", max_length=50, example="Doe")
     email: EmailStr = Field(example="john.doe@example.com")
     username: str = Field(min_length=3, max_length=50, example="johndoe")
 
@@ -16,14 +16,14 @@ class UserBase(BaseModel):
 
 class PasswordMixin(BaseModel):
     """Mixin for password validation"""
-    password: str = Field(min_length=6, max_length=128, example="SecurePass123")
+    password: str = Field(repr=False, min_length=6, max_length=128, example="SecurePass123")
 
     @model_validator(mode="before")
     @classmethod
     def validate_password(cls, values: dict) -> dict:
         password = values.get("password")
-        if not password:
-            raise ValidationError("Password is required", model=cls) # pragma: no cover
+        if not isinstance(password, str) or not password:
+            raise ValueError("Password is required") # pragma: no cover
         if len(password) < 6:
             raise ValueError("Password must be at least 6 characters long")
         if not any(char.isupper() for char in password):

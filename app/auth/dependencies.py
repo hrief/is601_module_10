@@ -3,12 +3,14 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from app.models.user import User
+from app.database import get_db
+from sqlalchemy.orm import Session
 from app.schemas.user import UserResponse
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def get_current_user(
-    db,
+    db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
 ) -> UserResponse:
     """Dependency to get current user from JWT token."""

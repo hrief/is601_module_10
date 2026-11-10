@@ -1,6 +1,6 @@
 # main.py
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator  # Use @validator for Pydantic 1.x
@@ -13,7 +13,47 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from app.database import get_db
+from app.models.user import User
+from app.schemas.base import UserCreate
+from app.schemas.user import UserRead, UserLogin, Token
+from app.auth.dependencies import get_current_active_user
+
+app = FastAPI(title="Secure User Calculator")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/users", response_model=UserRead, status_code=201)
+def register_user(data: UserCreate, db: Session = Depends(get_db)):
+    try:
+        user = User.register(db, data.model_dump())
+        db.commit()
+        db.refresh(user)
+        return user
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Username or email already exists") from exc
+
+
+@app.post("/token", response_model=Token)
+def login(data: UserLogin, db: Session = Depends(get_db)):
+    result = User.authenticate(db, data.username, data.password)
+    if result is None:
+        raise HTTPException(status_code=401, detail="Invalid credentials",
+                            headers={"WWW-Authenticate": "Bearer"})
+    return result
+
+
+@app.get("/users/me", response_model=UserRead)
+def read_current_user(user: UserRead = Depends(get_current_active_user)):
+    return user
+
 
 # Setup templates directory
 templates = Jinja2Templates(directory="templates")
@@ -44,6 +84,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.detail},
+        headers=exc.headers,
     )
 
 @app.exception_handler(RequestValidationError)
@@ -61,7 +102,7 @@ async def read_root(request: Request):
     """
     Serve the index.html template.
     """
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.post("/add", response_model=OperationResponse, responses={400: {"model": ErrorResponse}})
 async def add_route(operation: OperationRequest):

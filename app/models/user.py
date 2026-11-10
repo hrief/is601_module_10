@@ -5,21 +5,18 @@ from typing import Optional, Dict, Any
 
 from sqlalchemy import Column, String, DateTime, Boolean
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
+from app.database import Base
 from sqlalchemy.exc import IntegrityError
-from passlib.context import CryptContext
+from app.security import hash_password, verify_password
+from app.config import settings
 from jose import JWTError, jwt
 from pydantic import ValidationError
 
 from app.schemas.base import UserCreate
 from app.schemas.user import UserResponse, Token
 
-Base = declarative_base()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Move to config
-SECRET_KEY = "your-secret-key"
+SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -27,11 +24,22 @@ class User(Base):
     __tablename__ = 'users'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    first_name = Column(String(50), nullable=False)
-    last_name = Column(String(50), nullable=False)
+    first_name = Column(String(50), default="", nullable=False)
+    last_name = Column(String(50), default="", nullable=False)
     email = Column(String(120), unique=True, nullable=False)
     username = Column(String(50), unique=True, nullable=False)
-    password = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+
+    @property
+    def password(self):
+        """Legacy read access returns only the hash."""
+        return self.password_hash
+
+    @password.setter
+    def password(self, value):
+        # Keep older callers safe even when they pass a raw password.
+        self.password_hash = value if value.startswith("$argon2id$") else hash_password(value)
+
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     last_login = Column(DateTime, nullable=True)
@@ -43,12 +51,12 @@ class User(Base):
 
     @staticmethod
     def hash_password(password: str) -> str:
-        """Hash a password using bcrypt."""
-        return pwd_context.hash(password)
+        """Hash a password using Argon2id."""
+        return hash_password(password)
 
     def verify_password(self, plain_password: str) -> bool:
         """Verify a plain password against the hashed password."""
-        return pwd_context.verify(plain_password, self.password)
+        return verify_password(plain_password, self.password_hash)
 
     @staticmethod
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -95,7 +103,7 @@ class User(Base):
                 last_name=user_create.last_name,
                 email=user_create.email,
                 username=user_create.username,
-                password=cls.hash_password(user_create.password),
+                password_hash=cls.hash_password(user_create.password),
                 is_active=True,
                 is_verified=False
             )
@@ -104,6 +112,9 @@ class User(Base):
             db.flush()
             return new_user
             
+        except IntegrityError as e:
+            db.rollback()
+            raise ValueError("Username or email already exists") from e
         except ValidationError as e:
             raise ValueError(str(e)) # pragma: no cover
         except ValueError as e:
@@ -116,7 +127,7 @@ class User(Base):
             (cls.username == username) | (cls.email == username)
         ).first()
 
-        if not user or not user.verify_password(password):
+        if not user or not user.is_active or not user.verify_password(password):
             return None # pragma: no cover
 
         user.last_login = datetime.utcnow()

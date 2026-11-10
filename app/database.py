@@ -18,7 +18,7 @@ def get_engine(database_url: str = settings.DATABASE_URL):
     """
     try:
         # Create an engine instance with echo=True to log SQL queries (useful for learning)
-        engine = create_engine(database_url, echo=True)
+        engine = create_engine(database_url, echo=False, pool_pre_ping=True)
         return engine
     except SQLAlchemyError as e:
         print(f"Error creating engine: {e}")

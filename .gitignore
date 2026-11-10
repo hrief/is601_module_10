@@ -5,3 +5,10 @@ __pycache__/
 .coverage
 .pytest_cache
 htmlcov
+.venv/
+.env
+.env.*
+!.env.example
+*.db
+test-results/
+.docker-local/

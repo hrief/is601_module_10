@@ -1,264 +1,123 @@
-# 📦 Project Setup
+# Secure User Calculator ? Module 10
 
----
+Repository: [hrief/is601_module_10](https://github.com/hrief/is601_module_10)
 
-# 🧩 1. Install Homebrew (Mac Only)
+A FastAPI calculator extended with PostgreSQL-backed user registration, Argon2id
+password hashing, validated Pydantic input/output schemas, and JWT authentication.
+The `users` table enforces unique usernames and emails, stores `password_hash`,
+and records creation/update timestamps. `UserRead` excludes password fields.
+Existing calculator routes and the browser interface remain available.
 
-> Skip this step if you're on Windows.
+## Run locally
 
-Homebrew is a package manager for macOS.  
-You’ll use it to easily install Git, Python, Docker, etc.
+Use Python 3.13 and Docker Desktop with Linux containers.
 
-**Install Homebrew:**
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-**Verify Homebrew:**
+Put the generated value in `.env` as `SECRET_KEY`, then run:
 
-```bash
-brew --version
+```powershell
+docker compose up --build -d
 ```
 
-If you see a version number, you're good to go.
+Visit http://localhost:8000 and http://localhost:8000/docs. The container initializes
+new database tables before starting Uvicorn. For a host-based server instead:
 
----
-
-# 🧩 2. Install and Configure Git
-
-## Install Git
-
-- **MacOS (using Homebrew)**
-
-```bash
-brew install git
+```powershell
+docker compose up -d db
+python -m app.database_init
+python -m uvicorn main:app --reload
 ```
 
-- **Windows**
+`POST /users` accepts `username`, `email`, and `password`; first/last names are
+optional. Passwords require 6?128 characters with uppercase, lowercase, and a digit.
+`POST /token` accepts JSON `username` (or email) and `password`, returning a bearer
+token. Use it in `Authorization: Bearer <token>` for `GET /users/me`.
+Invalid input returns 400, duplicate registration 409, and invalid credentials 401.
+The signing key must stay private and be shared across application processes.
 
-Download and install [Git for Windows](https://git-scm.com/download/win).  
-Accept the default options during installation.
+## Run tests
 
-**Verify Git:**
+Fast local checks use an isolated in-memory SQLite database:
 
-```bash
-git --version
+```powershell
+python -m pytest tests/unit tests/integration --run-slow
 ```
 
----
+For the assignment's real PostgreSQL tests:
 
-## Configure Git Globals
-
-Set your name and email so Git tracks your commits properly:
-
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your_email@example.com"
+```powershell
+docker compose --profile test up -d --wait test-db
+$env:TEST_DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/fastapi_test"
+python -m playwright install chromium
+python -m pytest --run-slow --junitxml=test-results/junit.xml
 ```
 
-Confirm the settings:
+On macOS/Linux, activate with `source .venv/bin/activate` and use
+`export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/fastapi_test`.
+Tests cover salted hashes, wrong passwords, schema validation, secret-free responses,
+database uniqueness, rollback after constraint failures, registration, login,
+protected profiles, calculator APIs, and browser interactions.
+Tests never use `DATABASE_URL` for their database. `TEST_DATABASE_URL` must point to
+a disposable database ending in `_test`; fixtures create its tables and delete test
+rows. Do not point it at a database containing data you need. SQLite checks are a
+convenience; GitHub Actions explicitly runs against PostgreSQL 17.
 
-```bash
-git config --list
+## GitHub Actions and Docker Hub
+
+[Workflow runs](https://github.com/hrief/is601_module_10/actions)
+
+1. Create a public Docker Hub repository, for example `YOUR_DOCKERHUB_USERNAME/is601-module-10`.
+2. In GitHub **Settings ? Secrets and variables ? Actions**, add secrets
+   `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with write access).
+3. Add repository variable `DOCKERHUB_REPOSITORY` with `username/repository`.
+4. Push your code to `main`. Pull requests run tests, scanning, and smoke tests;
+   main pushes also publish the image after those checks pass.
+
+Docker Hub repository: **pending creation**.
+Replace this placeholder link after creating it:
+[Docker Hub image repository](https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/is601-module-10).
+No successful deployment is claimed until the repository is configured and the workflow passes.
+
+The pipeline runs all tests against PostgreSQL, uploads test/coverage reports,
+builds the runtime image, blocks fixable HIGH/CRITICAL vulnerabilities with Trivy,
+and smoke-tests registration against a second PostgreSQL container. It transfers
+the tested image as an artifact to the deployment job, which pushes `latest` and
+the full commit SHA to Docker Hub. Publishing an image is the deployment for this
+assignment; it does not provision a public application host.
+
+After publication, verify the pulled image (replace the image name):
+
+```powershell
+docker pull YOUR_DOCKERHUB_USERNAME/is601-module-10:latest
+docker compose up -d db
+docker run --rm -p 8001:8000 --env-file .env -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/fastapi_db YOUR_DOCKERHUB_USERNAME/is601-module-10:latest
 ```
 
----
-
-## Generate SSH Keys and Connect to GitHub
-
-> Only do this once per machine.
-
-1. Generate a new SSH key:
-
-```bash
-ssh-keygen -t ed25519 -C "your_email@example.com"
-```
-
-(Press Enter at all prompts.)
-
-2. Start the SSH agent:
-
-```bash
-eval "$(ssh-agent -s)"
-```
-
-3. Add the SSH private key to the agent:
-
-```bash
-ssh-add ~/.ssh/id_ed25519
-```
-
-4. Copy your SSH public key:
-
-- **Mac/Linux:**
-
-```bash
-cat ~/.ssh/id_ed25519.pub | pbcopy
-```
-
-- **Windows (Git Bash):**
-
-```bash
-cat ~/.ssh/id_ed25519.pub | clip
-```
-
-5. Add the key to your GitHub account:
-   - Go to [GitHub SSH Settings](https://github.com/settings/keys)
-   - Click **New SSH Key**, paste the key, save.
-
-6. Test the connection:
-
-```bash
-ssh -T git@github.com
-```
-
-You should see a success message.
-
----
-
-# 🧩 3. Clone the Repository
-
-Now you can safely clone the course project:
-
-```bash
-git clone <repository-url>
-cd <repository-directory>
-```
-
----
-
-# 🛠️ 4. Install Python 3.10+
-
-## Install Python
-
-- **MacOS (Homebrew)**
-
-```bash
-brew install python
-```
-
-- **Windows**
-
-Download and install [Python for Windows](https://www.python.org/downloads/).  
-✅ Make sure you **check the box** `Add Python to PATH` during setup.
-
-**Verify Python:**
-
-```bash
-python3 --version
-```
-or
-```bash
-python --version
-```
-
----
-
-## Create and Activate a Virtual Environment
-
-(Optional but recommended)
-
-```bash
-python3 -m venv venv
-source venv/bin/activate   # Mac/Linux
-venv\Scripts\activate.bat  # Windows
-```
-
-### Install Required Packages
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-# 🐳 5. (Optional) Docker Setup
-
-> Skip if Docker isn't used in this module.
-
-## Install Docker
-
-- [Install Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/)
-- [Install Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
-
-## Build Docker Image
-
-```bash
-docker build -t <image-name> .
-```
-
-## Run Docker Container
-
-```bash
-docker run -it --rm <image-name>
-```
-
----
-
-# 🚀 6. Running the Project
-
-- **Without Docker**:
-
-```bash
-python main.py
-```
-
-(or update this if the main script is different.)
-
-- **With Docker**:
-
-```bash
-docker run -it --rm <image-name>
-```
-
----
-
-# 📝 7. Submission Instructions
-
-After finishing your work:
-
-```bash
-git add .
-git commit -m "Complete Module X"
-git push origin main
-```
-
-Then submit the GitHub repository link as instructed.
-
----
-
-# 🔥 Useful Commands Cheat Sheet
-
-| Action                         | Command                                          |
-| ------------------------------- | ------------------------------------------------ |
-| Install Homebrew (Mac)          | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` |
-| Install Git                     | `brew install git` or Git for Windows installer |
-| Configure Git Global Username  | `git config --global user.name "Your Name"`      |
-| Configure Git Global Email     | `git config --global user.email "you@example.com"` |
-| Clone Repository                | `git clone <repo-url>`                          |
-| Create Virtual Environment     | `python3 -m venv venv`                           |
-| Activate Virtual Environment   | `source venv/bin/activate` / `venv\Scripts\activate.bat` |
-| Install Python Packages        | `pip install -r requirements.txt`               |
-| Build Docker Image              | `docker build -t <image-name> .`                |
-| Run Docker Container            | `docker run -it --rm <image-name>`               |
-| Push Code to GitHub             | `git add . && git commit -m "message" && git push` |
-
----
-
-# 📋 Notes
-
-- Install **Homebrew** first on Mac.
-- Install and configure **Git** and **SSH** before cloning.
-- Use **Python 3.10+** and **virtual environments** for Python projects.
-- **Docker** is optional depending on the project.
-
----
-
-# 📎 Quick Links
-
-- [Homebrew](https://brew.sh/)
-- [Git Downloads](https://git-scm.com/downloads)
-- [Python Downloads](https://www.python.org/downloads/)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [GitHub SSH Setup Guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh)
+Open http://localhost:8001/health and http://localhost:8001/docs.
+Application and test dependencies are listed in `requirements.txt`. The image
+runs as a non-root user and uses a Python HTTP health check. System packages and
+installation tooling are upgraded during the build; pip and its bootstrap bundle
+are removed after dependencies are installed.
+
+## Submission
+
+See [submission checklist](docs/submission.md) and [implementation reflection](docs/reflection.md).
+This project extends the supplied calculator starter. The module changes include
+Argon2id hashing, the hash column, unified metadata, API routes, safe test database
+selection, new security/API tests, and a build/scan/smoke-test/publish pipeline.
+Review and explain these changes in your own reflection before submitting.
+
+For an existing database made with the starter's `password` column, use a schema
+migration before deploying this version: `create_all` only creates missing tables.
+Starter bcrypt hashes also require a deliberate password reset or migration; this
+version verifies Argon2id hashes. Fresh assignment databases need no migration.
+
+Implementation references: [pwdlib hashing](https://frankie567.github.io/pwdlib/reference/pwdlib/)
+and [Docker test-before-push workflow](https://docs.docker.com/build/ci/github-actions/test-before-push/).
