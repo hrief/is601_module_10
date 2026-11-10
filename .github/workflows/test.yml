@@ -70,7 +70,7 @@ jobs:
             sleep 2
           done
           docker run -d --name smoke-app --network smoke -p 8000:8000 -e DATABASE_URL=postgresql://postgres:postgres@smoke-db:5432/fastapi_db -e SECRET_KEY=smoke-test-signing-key-at-least-32-characters secure-users:test
-          curl --retry 20 --retry-delay 2 --retry-connrefused --fail http://localhost:8000/health
+          curl --retry 20 --retry-delay 2 --retry-all-errors --connect-timeout 2 --max-time 5 --fail http://localhost:8000/health
           curl --fail -H 'Content-Type: application/json' -d '{"username":"smokeuser","email":"smoke@example.com","password":"TestPass123!"}' http://localhost:8000/users
       - name: Save tested image
         run: docker save secure-users:test -o /tmp/image.tar
